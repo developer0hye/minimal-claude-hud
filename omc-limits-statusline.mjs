@@ -306,7 +306,11 @@ function staleUsable(cache) {
 }
 
 function renderModel(stdinData) {
-  const name = stdinData?.model?.display_name;
+  const raw = stdinData?.model?.display_name;
+  if (!raw) return null;
+  // Drop the trailing context-window label (e.g. " (1M context)") that Claude Code
+  // appends to display_name — generic, so "(200K context)" etc. are handled too.
+  const name = raw.replace(/\s*\([^)]*context[^)]*\)\s*$/i, '');
   if (!name) return null;
   return `${CYAN}${name}${RESET}`;
 }

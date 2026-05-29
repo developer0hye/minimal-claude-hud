@@ -150,7 +150,7 @@ Delete the `statusLine` key from `~/.claude/settings.json` and remove the `~/.cl
 3. Calls `GET https://api.anthropic.com/api/oauth/usage` (header `anthropic-beta: oauth-2025-04-20`).
 4. Parses `five_hour.utilization`, `seven_day.utilization`, and each `resets_at` from the response.
 5. Caches in `~/.claude/cache/omc-limits-cache.json` for 1 minute. 429 uses exponential backoff (up to 5 minutes); network errors use a 2-minute TTL.
-6. Reads `model.display_name` and `context_window.used_percentage` from the JSON Claude Code passes on stdin.
+6. Reads `model.display_name` and `context_window.used_percentage` from the JSON Claude Code passes on stdin. The trailing context-window label on the model name (e.g. `(1M context)` in `Opus 4.8 (1M context)`) is stripped before display.
 7. Applies ANSI colors and prints to stdout as `Model ctx:NN% 5h:NN%(Hh Mm) wk:NN%(Dd Hh)`.
 
 ## License / Credits
