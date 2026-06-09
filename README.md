@@ -1,36 +1,51 @@
 # minimal-claude-hud
 
-Shows the **model name**, **context window usage**, **5-hour usage**, and **weekly usage** in the Claude Code global statusline.
+Shows the **current folder**, **git branch**, **model name**, **context window usage**, **5-hour usage**, and **weekly usage** in the Claude Code global statusline.
 
 ```
-Opus ctx:42% 5h:13%(1h15m) wk:3%(5d22h)
+myproject git:feat/my-branch Opus ctx:42% 5h:13%(1h15m) wk:3%(5d22h)
 ```
 
+- `myproject` — the current working folder (the last path segment of the directory Claude is running in)
+- `git:branch` — the current git branch (hidden when not in a git repo; short SHA when in detached HEAD)
 - `Opus` — the model currently in use
 - `ctx:NN%` — context window usage of the current conversation
 - `5h:NN%` / `wk:NN%` — 5-hour / weekly rate-limit usage from the OAuth usage API
 - ≥70%: yellow / ≥90%: red
-- Model name and context are read live from Claude Code's stdin JSON; 5h/wk are cached on a 1-minute cycle
+- Folder, model, and context are read live from Claude Code's stdin JSON; 5h/wk are cached on a 1-minute cycle
+- Git branch is read directly from the `.git/HEAD` file (no `git` process is spawned, so it adds no load at statusline-refresh frequency; worktrees/submodules are supported)
 - Supports both macOS Keychain credentials and file-based credentials
 - Zero external dependencies — a single `.mjs` file
 
-Distilled from [yeachan-heo/oh-my-claudecode](https://github.com/yeachan-heo/oh-my-claudecode) (MIT): only the 5h/weekly display logic from `src/hud/usage-api.ts` + `src/hud/elements/limits.ts` was extracted. The model name and context usage come from the stdin JSON that Claude Code passes to the statusline script.
+Distilled from [yeachan-heo/oh-my-claudecode](https://github.com/yeachan-heo/oh-my-claudecode) (MIT): only the 5h/weekly display logic from `src/hud/usage-api.ts` + `src/hud/elements/limits.ts` was extracted. The folder, model name, context usage, and git branch come from the stdin JSON Claude Code passes to the statusline script (and, for the branch, from `.git/HEAD`).
 
 ---
 
-## Install (let Claude Code do it — recommended)
+## Install as a plugin (recommended)
 
-Send the one line below in a Claude Code session. Claude will follow the "Claude Code install steps" section of this README and install it for you automatically.
+In a Claude Code session:
 
-> `Read https://github.com/developer0hye/minimal-claude-hud and follow the "Claude Code install steps" section of the README to install it.`
+```
+/plugin marketplace add developer0hye/minimal-claude-hud
+/plugin install minimal-claude-hud
+/minimal-claude-hud:setup
+```
 
-When it finishes, restart Claude Code once (`/clear` or a new session). From the next session on, usage will appear in the statusline of every project.
+Then **restart Claude Code** (`/clear` or a new session). From the next session on, the statusline appears in every project.
+
+What each step does:
+
+1. `marketplace add` registers this repo as a plugin marketplace (it ships a `.claude-plugin/marketplace.json`).
+2. `install` downloads the plugin (the bundled statusline script + the setup command).
+3. `/minimal-claude-hud:setup` runs the bundled `install.mjs`, which copies the statusline script into your Claude config dir and merges a `statusLine` entry into `settings.json` (your other settings are preserved). A plugin cannot set the main `statusLine` on its own, so this one-time setup step is required.
+
+To update later: `/plugin marketplace update minimal-claude-hud`, `/plugin install minimal-claude-hud`, then re-run `/minimal-claude-hud:setup` to refresh the copied script.
 
 ---
 
-## Claude Code install steps
+## Manual install (no plugin)
 
-This section lists the steps Claude Code follows. **A human can follow them directly too**, but letting Claude handle it takes care of OS differences, paths, and JSON merging for you.
+Prefer the plugin route above. If you want to wire it up by hand — or let Claude do it from a clone — follow these steps.
 
 ### Prerequisites
 - Node.js 18+ on your PATH (`node --version`)
@@ -66,10 +81,7 @@ echo '{"session_id":"test","cwd":".","model":{"display_name":"Opus"},"context_wi
 '{"session_id":"test","cwd":".","model":{"display_name":"Opus"},"context_window":{"used_percentage":42}}' | node (Join-Path $env:USERPROFILE ".claude\omc-limits-statusline.mjs")
 ```
 
-Expected output (with ANSI escapes):
-```
-[36mOpus[0m [2mctx:[0m[32m42%[0m 5h:[32m13%[0m[2m(1h15m)[0m [2mwk:[0m[32m3%[0m[2m(5d22h)[0m
-```
+(The example `cwd` is not a git repo, so no folder/branch segment shows in this isolated test; both appear once Claude Code runs it inside a real project.)
 
 If the output is empty:
 - Credentials could not be read → log into Claude Code once, then retry.
@@ -77,25 +89,7 @@ If the output is empty:
 
 ### 3. Register `statusLine` in `~/.claude/settings.json` (merge)
 
-**Do not overwrite** your existing settings.json — preserve the existing keys and only add/replace the `statusLine` entry. Claude follows this JSON merge rule:
-
-- If `~/.claude/settings.json` does not exist, create it.
-- If it exists, parse it as JSON and set only this key:
-  ```jsonc
-  {
-    "statusLine": {
-      "type": "command",
-      "command": "node \"<HOME>/.claude/omc-limits-statusline.mjs\"",
-      "padding": 0
-    }
-  }
-  ```
-  Replace `<HOME>` with the absolute path to your home directory for your OS:
-  - Windows: `C:/Users/<USERNAME>` (forward slashes), or expand `%USERPROFILE%` directly
-  - macOS / Linux: the value of `$HOME` (e.g. `/Users/yourname` or `/home/yourname`)
-- Leave all other keys (`enabledPlugins`, `effortLevel`, `autoUpdatesChannel`, `skipDangerousModePermissionPrompt`, hooks, permissions, etc.) **untouched.**
-
-A safe merge with Node (Claude can run this as-is):
+**Do not overwrite** your existing settings.json — preserve the existing keys and only add/replace the `statusLine` entry. A safe merge with Node (this is exactly what the plugin's `install.mjs` does):
 
 ```bash
 node -e '
@@ -116,23 +110,23 @@ console.log("statusLine registered:", scriptPath);
 
 After installing:
 - Restart Claude Code (`/clear` or a new session).
-- Success looks like `Opus ctx:NN% 5h:NN% wk:NN%` on the statusline row.
+- Success looks like `myproject Opus ctx:NN% 5h:NN% wk:NN%` on the statusline row.
 - The first run may be slightly delayed by the Anthropic API call; it is cached for 1 minute afterward.
 
 ---
 
 ## Update
 
+If you installed via the plugin, re-run the plugin update steps above. For a manual install, just re-download the script — no need to touch settings.json:
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/developer0hye/minimal-claude-hud/main/omc-limits-statusline.mjs \
   -o "$HOME/.claude/omc-limits-statusline.mjs"
 ```
 
-Just re-download the script file. No need to touch settings.json.
-
 ## Uninstall
 
-Delete the `statusLine` key from `~/.claude/settings.json` and remove the `~/.claude/omc-limits-statusline.mjs` file.
+Delete the `statusLine` key from `~/.claude/settings.json` and remove the `~/.claude/omc-limits-statusline.mjs` file. If you installed the plugin, also run `/plugin uninstall minimal-claude-hud`.
 
 ## Troubleshooting
 
@@ -150,8 +144,9 @@ Delete the `statusLine` key from `~/.claude/settings.json` and remove the `~/.cl
 3. Calls `GET https://api.anthropic.com/api/oauth/usage` (header `anthropic-beta: oauth-2025-04-20`).
 4. Parses `five_hour.utilization`, `seven_day.utilization`, and each `resets_at` from the response.
 5. Caches in `~/.claude/cache/omc-limits-cache.json` for 1 minute. 429 uses exponential backoff (up to 5 minutes); network errors use a 2-minute TTL.
-6. Reads `model.display_name` and `context_window.used_percentage` from the JSON Claude Code passes on stdin. The trailing context-window label on the model name (e.g. `(1M context)` in `Opus 4.8 (1M context)`) is stripped before display.
-7. Applies ANSI colors and prints to stdout as `Model ctx:NN% 5h:NN%(Hh Mm) wk:NN%(Dd Hh)`.
+6. Reads `workspace.current_dir` (falling back to `cwd`), `model.display_name`, and `context_window.used_percentage` from the JSON Claude Code passes on stdin. The folder is reduced to its last path segment (basename; both POSIX `/` and Windows `\` separators are handled). The trailing context-window label on the model name (e.g. `(1M context)` in `Opus 4.8 (1M context)`) is stripped before display.
+7. For the git branch, walks up from the cwd to find `.git` and reads its `HEAD` file directly — `ref: refs/heads/<branch>` yields the branch name, otherwise (detached HEAD) a 7-char short SHA. A `.git` *file* (`gitdir: <path>` — worktree/submodule) is followed too. No `git` process is spawned, so it adds no cost at statusline-refresh frequency. The segment is omitted entirely outside a git repo.
+8. Applies ANSI colors and prints to stdout as `folder git:branch Model ctx:NN% 5h:NN%(Hh Mm) wk:NN%(Dd Hh)` (the folder is uncolored; the branch is magenta).
 
 ## License / Credits
 

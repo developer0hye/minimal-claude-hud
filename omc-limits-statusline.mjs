@@ -10,9 +10,9 @@
 // ~/.claude/cache/omc-limits-cache.json. Output is colored by 70/90% thresholds.
 // Context window usage is read from Claude Code's stdin JSON (context_window.used_percentage).
 
-import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, mkdirSync, statSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import https from 'node:https';
@@ -37,6 +37,7 @@ const GREEN = '\x1b[32m';
 const YELLOW = '\x1b[33m';
 const RED = '\x1b[31m';
 const CYAN = '\x1b[36m';
+const MAGENTA = '\x1b[35m';
 const WARN_PCT = 70;
 const CRIT_PCT = 90;
 
@@ -305,6 +306,52 @@ function staleUsable(cache) {
   return Date.now() - cache.lastSuccessAt < MAX_STALE_MS;
 }
 
+function renderCwd(stdinData) {
+  const dir = stdinData?.workspace?.current_dir || stdinData?.cwd;
+  if (!dir) return null;
+  // Basename only: last non-empty segment, splitting on both POSIX and Windows separators.
+  const name = dir.split(/[\\/]/).filter(Boolean).pop();
+  if (!name) return null;
+  return name;
+}
+
+// Walk up from `startDir` looking for a .git entry; return the path of its HEAD file.
+// Handles worktrees/submodules where .git is a file containing "gitdir: <path>".
+function findGitHead(startDir) {
+  let dir = startDir;
+  for (let i = 0; i < 50; i++) {
+    const dotGit = join(dir, '.git');
+    if (existsSync(dotGit)) {
+      try {
+        if (statSync(dotGit).isDirectory()) return join(dotGit, 'HEAD');
+        const m = readFileSync(dotGit, 'utf-8').match(/^gitdir:\s*(.+?)\s*$/m);
+        if (m) return join(isAbsolute(m[1]) ? m[1] : join(dir, m[1]), 'HEAD');
+      } catch { /* ignore */ }
+      return null;
+    }
+    const parent = dirname(dir);
+    if (parent === dir) return null;
+    dir = parent;
+  }
+  return null;
+}
+
+function renderGitBranch(stdinData) {
+  const dir = stdinData?.workspace?.current_dir || stdinData?.cwd;
+  if (!dir) return null;
+  const headPath = findGitHead(dir);
+  if (!headPath || !existsSync(headPath)) return null;
+  try {
+    const head = readFileSync(headPath, 'utf-8').trim();
+    const m = head.match(/^ref:\s*refs\/heads\/(.+)$/);
+    const label = m ? m[1] : head.slice(0, 7); // detached HEAD -> short SHA
+    if (!label) return null;
+    return `${DIM}git:${RESET}${MAGENTA}${label}${RESET}`;
+  } catch {
+    return null;
+  }
+}
+
 function renderModel(stdinData) {
   const raw = stdinData?.model?.display_name;
   if (!raw) return null;
@@ -323,6 +370,12 @@ function renderContext(ctxPercent) {
 
 function render(limits, stale, stdinData) {
   const parts = [];
+
+  const cwdPart = renderCwd(stdinData);
+  if (cwdPart) parts.push(cwdPart);
+
+  const branchPart = renderGitBranch(stdinData);
+  if (branchPart) parts.push(branchPart);
 
   const modelPart = renderModel(stdinData);
   if (modelPart) parts.push(modelPart);
