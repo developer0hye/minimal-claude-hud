@@ -28,6 +28,7 @@ In a Claude Code session:
 ```
 /plugin marketplace add developer0hye/minimal-claude-hud
 /plugin install minimal-claude-hud
+/reload-plugins
 /minimal-claude-hud:setup
 ```
 
