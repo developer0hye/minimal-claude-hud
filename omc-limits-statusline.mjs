@@ -7,20 +7,28 @@
 //
 // Single-file, no external deps. Reads credentials from macOS Keychain on darwin,
 // then falls back to ~/.claude/.credentials.json. Caches results in
-// ~/.claude/cache/omc-limits-cache.json. Output is colored by 70/90% thresholds.
-// Context window usage is read from Claude Code's stdin JSON (context_window.used_percentage).
+// ~/.claude/cache/omc-limits-cache.json. Rendering never blocks on the network
+// (stale-while-revalidate): when the cache is expired, a detached child process
+// re-runs this script with --refresh to update the cache, while the current
+// render serves the cached value immediately. This keeps every render well
+// under Claude Code's statusline command timeout, so updates are never dropped.
+// Output is colored by 70/90% thresholds. Context window usage is read from
+// Claude Code's stdin JSON (context_window.used_percentage).
 
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, mkdirSync, statSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import https from 'node:https';
 
 const CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude');
 const CRED_PATH = join(CONFIG_DIR, '.credentials.json');
 const CACHE_DIR = join(CONFIG_DIR, 'cache');
 const CACHE_PATH = join(CACHE_DIR, 'omc-limits-cache.json');
+const REFRESH_LOCK_PATH = join(CACHE_DIR, 'omc-limits-refresh.lock');
+const SCRIPT_PATH = fileURLToPath(import.meta.url);
 
 const DEFAULT_OAUTH_CLIENT_ID = '9d1c250a-e61b-44d9-88ed-5944d1962f5e';
 const API_TIMEOUT_MS = 10_000;
@@ -30,6 +38,11 @@ const NETWORK_TTL_MS = 2 * 60 * 1000;
 const RATE_LIMITED_BASE_MS = 60_000;
 const MAX_RATE_LIMITED_MS = 5 * 60 * 1000;
 const MAX_STALE_MS = 15 * 60 * 1000;
+// A --refresh child holds the lock for its whole run; worst case is two token
+// refreshes + two usage fetches (~40s), so the stale-lock cutoff sits above that.
+const REFRESH_LOCK_TTL_MS = 60_000;
+const STALE_MARK_AFTER_MS = 2 * POLL_INTERVAL_MS;
+const COLD_START_WAIT_MS = 1500;
 
 const RESET = '\x1b[0m';
 const DIM = '\x1b[2m';
@@ -280,10 +293,14 @@ function readCache() {
   }
 }
 
+// Atomic write (tmp + rename): renders may read the cache while a --refresh
+// child is writing it, and a torn read must never surface as a parse failure.
 function writeCache(entry) {
   try {
     if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
-    writeFileSync(CACHE_PATH, JSON.stringify(entry, null, 2));
+    const tmp = `${CACHE_PATH}.tmp.${process.pid}`;
+    writeFileSync(tmp, JSON.stringify(entry, null, 2));
+    renameSync(tmp, CACHE_PATH);
   } catch { /* ignore */ }
 }
 
@@ -300,10 +317,13 @@ function isCacheFresh(cache) {
   return age < POLL_INTERVAL_MS;
 }
 
-function staleUsable(cache) {
-  if (!cache?.data) return false;
-  if (!cache.lastSuccessAt) return false;
-  return Date.now() - cache.lastSuccessAt < MAX_STALE_MS;
+// What the render is allowed to show: the last successful data, hidden once it
+// is older than MAX_STALE_MS, marked stale (~) once older than STALE_MARK_AFTER_MS.
+function usageFromCache(cache) {
+  if (!cache?.data || !cache.lastSuccessAt) return null;
+  const age = Date.now() - cache.lastSuccessAt;
+  if (age > MAX_STALE_MS) return null;
+  return { limits: cache.data, stale: age > STALE_MARK_AFTER_MS };
 }
 
 function renderCwd(stdinData) {
@@ -407,19 +427,96 @@ function render(limits, stale, stdinData) {
   return parts.length > 0 ? parts.join(' ') : null;
 }
 
-async function getUsage() {
-  const cache = readCache();
-  if (cache && isCacheFresh(cache)) {
-    if ((cache.rateLimited || cache.error) && staleUsable(cache)) {
-      return { limits: cache.data, stale: true };
-    }
-    return { limits: cache.data, stale: false };
+// Cross-process lock so concurrent statusline invocations (multiple sessions,
+// rapid re-renders) spawn at most one --refresh child. Created with O_EXCL by
+// whoever spawns; released by the child when it finishes; a leftover lock from
+// a crashed child expires by mtime.
+function acquireRefreshLock() {
+  try {
+    if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
+  } catch {
+    return false;
   }
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      writeFileSync(REFRESH_LOCK_PATH, String(process.pid), { flag: 'wx' });
+      return true;
+    } catch {
+      try {
+        if (Date.now() - statSync(REFRESH_LOCK_PATH).mtimeMs < REFRESH_LOCK_TTL_MS) return false;
+        unlinkSync(REFRESH_LOCK_PATH);
+      } catch {
+        return false;
+      }
+    }
+  }
+  return false;
+}
+
+function releaseRefreshLock() {
+  try { unlinkSync(REFRESH_LOCK_PATH); } catch { /* ignore */ }
+}
+
+// Kick off a detached child running this same script with --refresh, so the
+// network round-trip never delays the render (or gets killed with it when
+// Claude Code times the statusline command out).
+function spawnRefresh() {
+  if (!acquireRefreshLock()) return;
+  try {
+    const child = spawn(process.execPath, [SCRIPT_PATH, '--refresh'], {
+      detached: true,
+      stdio: 'ignore',
+    });
+    child.unref();
+  } catch {
+    releaseRefreshLock();
+  }
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+// Cold start only (no usable data yet): give the just-spawned refresh a short,
+// bounded window to land so the very first render can already show 5h/wk.
+// If it doesn't make it, render without those segments — the next statusline
+// tick picks them up.
+async function waitForCacheUpdate(budgetMs) {
+  const deadline = Date.now() + budgetMs;
+  while (Date.now() < deadline) {
+    await sleep(100);
+    const cache = readCache();
+    if (cache?.data && cache.lastSuccessAt) return cache;
+    if (cache && (cache.error || cache.rateLimited)) return cache;
+  }
+  return null;
+}
+
+// Render side: never blocks on the network.
+async function getUsage() {
+  let cache = readCache();
+  if (!isCacheFresh(cache)) {
+    spawnRefresh();
+    if (!cache?.data) cache = (await waitForCacheUpdate(COLD_START_WAIT_MS)) ?? cache;
+  }
+  return usageFromCache(cache) ?? { limits: null, stale: false };
+}
+
+// --refresh side: the network round-trip, persisted to the cache for renders.
+async function refreshUsageCache() {
+  const cache = readCache();
+  if (isCacheFresh(cache)) return; // another process refreshed in the meantime
 
   let creds = readCredentials();
   if (!creds) {
-    if (staleUsable(cache)) return { limits: cache.data, stale: true };
-    return { limits: null, stale: false };
+    writeCache({
+      timestamp: Date.now(),
+      data: cache?.data ?? null,
+      error: true,
+      errorReason: 'credentials',
+      lastSuccessAt: cache?.lastSuccessAt,
+    });
+    return;
   }
 
   const now = Date.now();
@@ -454,8 +551,7 @@ async function getUsage() {
       rateLimitedUntil: Date.now() + backoff,
       lastSuccessAt: cache?.lastSuccessAt,
     });
-    if (staleUsable(cache)) return { limits: cache.data, stale: true };
-    return { limits: null, stale: false };
+    return;
   }
 
   if (!res.data) {
@@ -466,8 +562,7 @@ async function getUsage() {
       errorReason: res.network ? 'network' : 'http',
       lastSuccessAt: cache?.lastSuccessAt,
     });
-    if (staleUsable(cache)) return { limits: cache.data, stale: true };
-    return { limits: null, stale: false };
+    return;
   }
 
   const parsed = parseResponse(res.data);
@@ -477,7 +572,6 @@ async function getUsage() {
     error: false,
     lastSuccessAt: Date.now(),
   });
-  return { limits: parsed, stale: false };
 }
 
 function readStdin() {
@@ -485,7 +579,14 @@ function readStdin() {
     if (process.stdin.isTTY) return resolve(null);
     let buf = '';
     let resolved = false;
-    const done = (val) => { if (!resolved) { resolved = true; resolve(val); } };
+    let timer = null;
+    const done = (val) => {
+      if (resolved) return;
+      resolved = true;
+      if (timer) clearTimeout(timer);
+      try { process.stdin.pause(); } catch { /* ignore */ }
+      resolve(val);
+    };
     process.stdin.setEncoding('utf-8');
     process.stdin.on('data', (chunk) => { buf += chunk; });
     const parse = (s) => JSON.parse(s.replace(/^﻿/, ''));
@@ -493,7 +594,7 @@ function readStdin() {
       try { done(parse(buf)); } catch { done(null); }
     });
     process.stdin.on('error', () => done(null));
-    setTimeout(() => {
+    timer = setTimeout(() => {
       if (buf) { try { done(parse(buf)); } catch { done(null); } }
       else { done(null); }
     }, 200);
@@ -501,6 +602,11 @@ function readStdin() {
 }
 
 async function main() {
+  if (process.argv.includes('--refresh')) {
+    try { await refreshUsageCache(); } catch { /* refresh must never throw */ }
+    releaseRefreshLock();
+    return;
+  }
   try {
     const [stdinData, { limits, stale }] = await Promise.all([readStdin(), getUsage()]);
     const out = render(limits, stale, stdinData);

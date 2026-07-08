@@ -13,6 +13,7 @@ myproject git:feat/my-branch Opus ctx:42% 5h:13%(1h15m) wk:3%(5d22h)
 - `5h:NN%` / `wk:NN%` — 5-hour / weekly rate-limit usage from the OAuth usage API
 - ≥70%: yellow / ≥90%: red
 - Folder, model, and context are read live from Claude Code's stdin JSON; 5h/wk are cached on a 1-minute cycle
+- Rendering never blocks on the network: an expired cache is refreshed by a detached background process while the current value renders immediately, so the statusline always appears instantly and updates are never dropped by Claude Code's statusline command timeout
 - Git branch is read directly from the `.git/HEAD` file (no `git` process is spawned, so it adds no load at statusline-refresh frequency; worktrees/submodules are supported)
 - Supports both macOS Keychain credentials and file-based credentials
 - Zero external dependencies — a single `.mjs` file
@@ -70,7 +71,7 @@ Invoke-WebRequest -Uri "https://raw.githubusercontent.com/developer0hye/minimal-
 
 ### 2. Check that the statusline works
 
-Run the script once to confirm it produces output (when the cache is empty, the first call hits the Anthropic API — about 1 second).
+Run the script once to confirm it produces output (when the cache is empty, the first call spawns a background API fetch and waits up to ~1.5 s for it; afterwards every call renders instantly from the cache).
 
 ```bash
 # bash
@@ -112,7 +113,7 @@ console.log("statusLine registered:", scriptPath);
 After installing:
 - Restart Claude Code (`/clear` or a new session).
 - Success looks like `myproject Opus ctx:NN% 5h:NN% wk:NN%` on the statusline row.
-- The first run may be slightly delayed by the Anthropic API call; it is cached for 1 minute afterward.
+- On the very first run the `5h`/`wk` segments may appear one statusline tick later (the API fetch runs in the background); everything else shows immediately.
 
 ---
 
@@ -144,7 +145,7 @@ Delete the `statusLine` key from `~/.claude/settings.json` and remove the `~/.cl
 2. If the access token is expired, refreshes it via `platform.claude.com/v1/oauth/token`.
 3. Calls `GET https://api.anthropic.com/api/oauth/usage` (header `anthropic-beta: oauth-2025-04-20`).
 4. Parses `five_hour.utilization`, `seven_day.utilization`, and each `resets_at` from the response.
-5. Caches in `~/.claude/cache/omc-limits-cache.json` for 1 minute. 429 uses exponential backoff (up to 5 minutes); network errors use a 2-minute TTL.
+5. Caches in `~/.claude/cache/omc-limits-cache.json` for 1 minute. 429 uses exponential backoff (up to 5 minutes); network errors use a 2-minute TTL. Steps 1–4 never run in the render path: when the cache is expired, the script re-executes itself as a detached `--refresh` child (deduplicated across sessions by a lock file) and renders the cached value immediately — data older than 2 minutes gets a `*`/`~` stale mark, and older than 15 minutes is hidden.
 6. Reads `workspace.current_dir` (falling back to `cwd`), `model.display_name`, and `context_window.used_percentage` from the JSON Claude Code passes on stdin. The folder is reduced to its last path segment (basename; both POSIX `/` and Windows `\` separators are handled). The trailing context-window label on the model name (e.g. `(1M context)` in `Opus 4.8 (1M context)`) is stripped before display.
 7. For the git branch, walks up from the cwd to find `.git` and reads its `HEAD` file directly — `ref: refs/heads/<branch>` yields the branch name, otherwise (detached HEAD) a 7-char short SHA. A `.git` *file* (`gitdir: <path>` — worktree/submodule) is followed too. No `git` process is spawned, so it adds no cost at statusline-refresh frequency. The segment is omitted entirely outside a git repo.
 8. Applies ANSI colors and prints to stdout as `folder git:branch Model ctx:NN% 5h:NN%(Hh Mm) wk:NN%(Dd Hh)` (the folder is uncolored; the branch is magenta).
