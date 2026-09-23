@@ -2,6 +2,8 @@
 
 Shows the **current folder**, **git branch**, **model name**, **context window usage**, **5-hour usage**, and **weekly usage** in the Claude Code global statusline.
 
+Also supports **OpenAI Codex CLI** (folder, git branch, model, context, weekly usage) — see [Codex CLI](#codex-cli).
+
 ```
 myproject git:feat/my-branch Opus ctx:42% 5h:13%(1h15m) wk:3%(5d22h)
 ```
@@ -115,6 +117,39 @@ After installing:
 - Restart Claude Code (`/clear` or a new session).
 - Success looks like `myproject Opus ctx:NN% 5h:NN% wk:NN%` on the statusline row.
 - On the very first run the `5h`/`wk` segments may appear one statusline tick later (the API fetch runs in the background); everything else shows immediately.
+
+---
+
+## Codex CLI
+
+Codex CLI has no custom statusline command, but its built-in status line items cover the same fields. No script is needed — add this to `~/.codex/config.toml` (or pick the items interactively with `/statusline` inside Codex):
+
+```toml
+[tui]
+status_line = ["project-name", "git-branch", "model", "context-used", "weekly-limit"]
+```
+
+Result:
+
+```
+myproject · feat/my-branch · gpt-5.6-sol · Context 42% used · weekly 84% left
+```
+
+| minimal-claude-hud | Codex item |
+|--------------------|------------|
+| folder | `project-name` |
+| `git:branch` | `git-branch` |
+| model | `model` |
+| `ctx:NN%` | `context-used` |
+| `wk:NN%` | `weekly-limit` |
+
+Differences from the Claude Code version (Codex renders these itself, so they can't be changed):
+- Weekly usage is shown as **remaining** (`weekly 84% left`), not used.
+- No reset countdown and no ≥70% / ≥90% color thresholds.
+- The git branch is looked up at turn start/end, so it may appear only after the first turn.
+- If your plan also has a 5-hour limit, add `"five-hour-limit"` to the list.
+
+Verified with Codex CLI 0.146.1.
 
 ---
 
