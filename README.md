@@ -13,6 +13,7 @@ myproject git:feat/my-branch Opus ctx:42% 5h:13%(1h15m) wk:3%(5d22h)
 - `5h:NN%` / `wk:NN%` — 5-hour / weekly rate-limit usage from the OAuth usage API
 - ≥70%: yellow / ≥90%: red
 - Folder, model, and context are read live from Claude Code's stdin JSON; 5h/wk are cached on a 1-minute cycle
+- Keeps updating while the main session is idle (e.g. while it waits on subagents): the installer sets `statusLine.refreshInterval` to 10 seconds so Claude Code re-runs the script on a timer too. Re-runs only read the cache, so this adds no API calls
 - Rendering never blocks on the network: an expired cache is refreshed by a detached background process while the current value renders immediately, so the statusline always appears instantly and updates are never dropped by Claude Code's statusline command timeout
 - Git branch is read directly from the `.git/HEAD` file (no `git` process is spawned, so it adds no load at statusline-refresh frequency; worktrees/submodules are supported)
 - Supports both macOS Keychain credentials and file-based credentials
@@ -102,7 +103,7 @@ const settingsPath = path.join(os.homedir(), ".claude", "settings.json");
 const scriptPath = path.join(os.homedir(), ".claude", "omc-limits-statusline.mjs").replace(/\\/g, "/");
 let s = {};
 if (fs.existsSync(settingsPath)) s = JSON.parse(fs.readFileSync(settingsPath, "utf-8"));
-s.statusLine = { type: "command", command: `node "${scriptPath}"`, padding: 0 };
+s.statusLine = { type: "command", command: `node "${scriptPath}"`, padding: 0, refreshInterval: 10 };
 fs.writeFileSync(settingsPath, JSON.stringify(s, null, 2));
 console.log("statusLine registered:", scriptPath);
 '
@@ -135,6 +136,7 @@ Delete the `statusLine` key from `~/.claude/settings.json` and remove the `~/.cl
 | Symptom | Cause / fix |
 |---------|-------------|
 | Nothing shows on the statusline | 1) Check `node --version`. 2) Run `node ~/.claude/omc-limits-statusline.mjs` manually and inspect the output. 3) Restart Claude Code. |
+| Statusline freezes while subagents run | Claude Code only re-renders the statusline on main-session events. Make sure `statusLine.refreshInterval` is set in settings.json (the installer sets `10`; re-run `/minimal-claude-hud:setup` if you installed an older version). Note that `ctx:` is the main conversation's context only; subagent usage does count toward `5h`/`wk`. |
 | Only `5h:0%` shows | The API likely did not return a response. `OMC_DEBUG` is disabled in this extract. Delete the cache file `~/.claude/cache/omc-limits-cache.json` and retry. |
 | Credentials not read on macOS | Check directly with `security find-generic-password -s "Claude Code-credentials" -w`. If empty, log back into Claude Code. |
 | Non-default config via `CLAUDE_CONFIG_DIR` | The script picks up the env var automatically. The Keychain service name is computed as `Claude Code-credentials-<sha256(CLAUDE_CONFIG_DIR)[:8]>`. |
