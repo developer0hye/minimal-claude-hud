@@ -43,7 +43,12 @@ if (existsSync(settingsPath)) {
 }
 
 const command = `node "${dst.replace(/\\/g, '/')}"`;
-settings.statusLine = { type: 'command', command, padding: 0 };
+// Statusline updates are event-driven and go quiet while the main session is
+// idle (e.g. waiting on subagents), so also re-run on a timer. Rendering reads
+// the cache, so this adds no API calls. Keep a user-chosen interval if present.
+const prevInterval = settings.statusLine?.refreshInterval;
+const refreshInterval = Number.isFinite(prevInterval) && prevInterval >= 1 ? prevInterval : 10;
+settings.statusLine = { type: 'command', command, padding: 0, refreshInterval };
 writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
 
 console.log('[minimal-claude-hud] installed');
