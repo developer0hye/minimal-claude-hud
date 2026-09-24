@@ -2,7 +2,7 @@
 
 Shows the **current folder**, **git branch**, **model name**, **context window usage**, **5-hour usage**, and **weekly usage** in the Claude Code global statusline.
 
-Also supports **OpenAI Codex CLI** (folder, git branch, model, context, weekly usage) — see [Codex CLI](#codex-cli).
+Also supports **OpenAI Codex CLI** (folder, git branch, model, fast mode, context, weekly usage) — see [Codex CLI](#codex-cli).
 
 ```
 myproject git:feat/my-branch Opus ctx:42% 5h:13%(1h15m) wk:3%(5d22h)
@@ -126,13 +126,13 @@ Codex CLI has no custom statusline command, but its built-in status line items c
 
 ```toml
 [tui]
-status_line = ["project-name", "git-branch", "model", "context-used", "weekly-limit"]
+status_line = ["project-name", "git-branch", "model", "fast-mode", "context-used", "weekly-limit"]
 ```
 
 Result:
 
 ```
-myproject · feat/my-branch · gpt-5.6-sol · Context 42% used · weekly 84% left
+myproject · feat/my-branch · GPT-6-Astra · Fast on · Context 42% used · weekly 84% left
 ```
 
 | minimal-claude-hud | Codex item |
@@ -140,6 +140,7 @@ myproject · feat/my-branch · gpt-5.6-sol · Context 42% used · weekly 84% lef
 | folder | `project-name` |
 | `git:branch` | `git-branch` |
 | model | `model` |
+| fast mode (Codex only) | `fast-mode` (`Fast on` / `Fast off`) |
 | `ctx:NN%` | `context-used` |
 | `wk:NN%` | `weekly-limit` |
 
@@ -149,7 +150,9 @@ Differences from the Claude Code version (Codex renders these itself, so they ca
 - The git branch is looked up at turn start/end, so it may appear only after the first turn.
 - If your plan also has a 5-hour limit, add `"five-hour-limit"` to the list.
 
-Verified with Codex CLI 0.146.1.
+The `fast-mode` item shows `Fast on` when the current session uses Fast mode and `Fast off` otherwise. Adding it only changes the display; it does not enable Fast mode or change your service tier. In an existing config, add `"fast-mode"` to your current `status_line` array under `[tui]` without replacing other settings or duplicating the table. You can also run `/statusline`, search for `fast-mode`, select it with Space, and save with Enter. Restart an already-running CLI after editing `config.toml` directly.
+
+Verified with Codex CLI 0.156.1 on Linux: both `Fast on` with the existing `service_tier = "fast"` setting and `Fast off` with a temporary `codex -c 'service_tier="default"'` override were displayed in the interactive terminal.
 
 ---
 
