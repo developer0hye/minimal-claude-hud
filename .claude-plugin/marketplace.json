@@ -6,13 +6,13 @@
   },
   "metadata": {
     "description": "Minimal statusline HUD for Claude Code",
-    "version": "0.2.0"
+    "version": "0.2.1"
   },
   "plugins": [
     {
       "name": "minimal-claude-hud",
       "source": "./",
-      "description": "Real-time statusline: folder, git branch, model, context %, and 5h/weekly rate-limit usage. Zero config, zero dependencies, single .mjs.",
+      "description": "Real-time statusline: folder, git branch, model, fast mode, context %, and 5h/weekly rate-limit usage. Zero config, zero dependencies, single .mjs.",
       "category": "monitoring",
       "tags": ["hud", "statusline", "monitoring", "context", "rate-limit"]
     }

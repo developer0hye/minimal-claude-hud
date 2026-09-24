@@ -382,6 +382,13 @@ function renderModel(stdinData) {
   return `${CYAN}${name}${RESET}`;
 }
 
+function renderFastMode(stdinData) {
+  const enabled = stdinData?.fast_mode;
+  // Older clients omit this field; do not mistake an unknown state for off.
+  if (typeof enabled !== 'boolean') return null;
+  return `${DIM}fast:${RESET}${enabled ? GREEN : DIM}${enabled ? 'on' : 'off'}${RESET}`;
+}
+
 function renderContext(ctxPercent) {
   if (ctxPercent == null) return null;
   const pct = Math.round(clamp(ctxPercent));
@@ -399,6 +406,9 @@ function render(limits, stale, stdinData) {
 
   const modelPart = renderModel(stdinData);
   if (modelPart) parts.push(modelPart);
+
+  const fastPart = renderFastMode(stdinData);
+  if (fastPart) parts.push(fastPart);
 
   const ctxPart = renderContext(stdinData?.context_window?.used_percentage ?? null);
   if (ctxPart) parts.push(ctxPart);
