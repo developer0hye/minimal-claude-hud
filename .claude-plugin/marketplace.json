@@ -12,7 +12,7 @@
     {
       "name": "minimal-claude-hud",
       "source": "./",
-      "description": "Real-time statusline: folder, git branch, model, context %, and 5h/weekly rate-limit usage. Zero config, zero dependencies, single .mjs.",
+      "description": "Real-time statusline: folder, git branch, model, reasoning effort, context %, and 5h/weekly rate-limit usage. Zero config, zero dependencies, single .mjs.",
       "category": "monitoring",
       "tags": ["hud", "statusline", "monitoring", "context", "rate-limit"]
     }

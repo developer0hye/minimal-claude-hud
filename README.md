@@ -1,27 +1,28 @@
 # minimal-claude-hud
 
-Shows the **current folder**, **git branch**, **model name**, **context window usage**, **5-hour usage**, and **weekly usage** in the Claude Code global statusline.
+Shows the **current folder**, **git branch**, **model name**, **reasoning effort**, **context window usage**, **5-hour usage**, and **weekly usage** in the Claude Code global statusline.
 
 Also supports **OpenAI Codex CLI** (folder, git branch, model and reasoning effort, fast mode, context, weekly usage) — see [Codex CLI](#codex-cli).
 
 ```
-myproject git:feat/my-branch Opus ctx:42% 5h:13%(1h15m) wk:3%(5d22h)
+myproject git:feat/my-branch Opus high ctx:42% 5h:13%(1h15m) wk:3%(5d22h)
 ```
 
 - `myproject` — the current working folder (the last path segment of the directory Claude is running in)
 - `git:branch` — the current git branch (hidden when not in a git repo; short SHA when in detached HEAD)
 - `Opus` — the model currently in use
+- `high` — the current reasoning effort (`low` / `medium` / `high` / `xhigh` / `max`), including mid-session `/effort` changes; hidden when the model does not support the effort parameter
 - `ctx:NN%` — context window usage of the current conversation
 - `5h:NN%` / `wk:NN%` — 5-hour / weekly rate-limit usage from the OAuth usage API
 - ≥70%: yellow / ≥90%: red
-- Folder, model, and context are read live from Claude Code's stdin JSON; 5h/wk are cached on a 1-minute cycle
+- Folder, model, effort, and context are read live from Claude Code's stdin JSON; 5h/wk are cached on a 1-minute cycle
 - Keeps updating while the main session is idle (e.g. while it waits on subagents): the installer sets `statusLine.refreshInterval` to 10 seconds so Claude Code re-runs the script on a timer too. Re-runs only read the cache, so this adds no API calls
 - Rendering never blocks on the network: an expired cache is refreshed by a detached background process while the current value renders immediately, so the statusline always appears instantly and updates are never dropped by Claude Code's statusline command timeout
 - Git branch is read directly from the `.git/HEAD` file (no `git` process is spawned, so it adds no load at statusline-refresh frequency; worktrees/submodules are supported)
 - Supports both macOS Keychain credentials and file-based credentials
 - Zero external dependencies — a single `.mjs` file
 
-Distilled from [yeachan-heo/oh-my-claudecode](https://github.com/yeachan-heo/oh-my-claudecode) (MIT): only the 5h/weekly display logic from `src/hud/usage-api.ts` + `src/hud/elements/limits.ts` was extracted. The folder, model name, context usage, and git branch come from the stdin JSON Claude Code passes to the statusline script (and, for the branch, from `.git/HEAD`).
+Distilled from [yeachan-heo/oh-my-claudecode](https://github.com/yeachan-heo/oh-my-claudecode) (MIT): only the 5h/weekly display logic from `src/hud/usage-api.ts` + `src/hud/elements/limits.ts` was extracted. The folder, model name, reasoning effort, context usage, and git branch come from the stdin JSON Claude Code passes to the statusline script (and, for the branch, from `.git/HEAD`).
 
 ---
 
@@ -78,12 +79,12 @@ Run the script once to confirm it produces output (when the cache is empty, the 
 
 ```bash
 # bash
-echo '{"session_id":"test","cwd":".","model":{"display_name":"Opus"},"context_window":{"used_percentage":42}}' | node "$HOME/.claude/omc-limits-statusline.mjs"
+echo '{"session_id":"test","cwd":".","model":{"display_name":"Opus"},"effort":{"level":"high"},"context_window":{"used_percentage":42}}' | node "$HOME/.claude/omc-limits-statusline.mjs"
 ```
 
 ```powershell
 # PowerShell
-'{"session_id":"test","cwd":".","model":{"display_name":"Opus"},"context_window":{"used_percentage":42}}' | node (Join-Path $env:USERPROFILE ".claude\omc-limits-statusline.mjs")
+'{"session_id":"test","cwd":".","model":{"display_name":"Opus"},"effort":{"level":"high"},"context_window":{"used_percentage":42}}' | node (Join-Path $env:USERPROFILE ".claude\omc-limits-statusline.mjs")
 ```
 
 (The example `cwd` is not a git repo, so no folder/branch segment shows in this isolated test; both appear once Claude Code runs it inside a real project.)
@@ -115,7 +116,7 @@ console.log("statusLine registered:", scriptPath);
 
 After installing:
 - Restart Claude Code (`/clear` or a new session).
-- Success looks like `myproject Opus ctx:NN% 5h:NN% wk:NN%` on the statusline row.
+- Success looks like `myproject Opus high ctx:NN% 5h:NN% wk:NN%` on the statusline row.
 - On the very first run the `5h`/`wk` segments may appear one statusline tick later (the API fetch runs in the background); everything else shows immediately.
 
 ---
@@ -187,9 +188,9 @@ Delete the `statusLine` key from `~/.claude/settings.json` and remove the `~/.cl
 3. Calls `GET https://api.anthropic.com/api/oauth/usage` (header `anthropic-beta: oauth-2025-04-20`).
 4. Parses `five_hour.utilization`, `seven_day.utilization`, and each `resets_at` from the response.
 5. Caches in `~/.claude/cache/omc-limits-cache.json` for 1 minute. 429 uses exponential backoff (up to 5 minutes); network errors use a 2-minute TTL. Steps 1–4 never run in the render path: when the cache is expired, the script re-executes itself as a detached `--refresh` child (deduplicated across sessions by a lock file) and renders the cached value immediately — data older than 2 minutes gets a `*`/`~` stale mark, and older than 15 minutes is hidden.
-6. Reads `workspace.current_dir` (falling back to `cwd`), `model.display_name`, and `context_window.used_percentage` from the JSON Claude Code passes on stdin. The folder is reduced to its last path segment (basename; both POSIX `/` and Windows `\` separators are handled). The trailing context-window label on the model name (e.g. `(1M context)` in `Opus 4.8 (1M context)`) is stripped before display.
+6. Reads `workspace.current_dir` (falling back to `cwd`), `model.display_name`, `effort.level`, and `context_window.used_percentage` from the JSON Claude Code passes on stdin. The folder is reduced to its last path segment (basename; both POSIX `/` and Windows `\` separators are handled). The trailing context-window label on the model name (e.g. `(1M context)` in `Opus 4.8 (1M context)`) is stripped before display. The effort level follows the model name and is omitted when Claude Code leaves `effort` out (models without effort support).
 7. For the git branch, walks up from the cwd to find `.git` and reads its `HEAD` file directly — `ref: refs/heads/<branch>` yields the branch name, otherwise (detached HEAD) a 7-char short SHA. A `.git` *file* (`gitdir: <path>` — worktree/submodule) is followed too. No `git` process is spawned, so it adds no cost at statusline-refresh frequency. The segment is omitted entirely outside a git repo.
-8. Applies ANSI colors and prints to stdout as `folder git:branch Model ctx:NN% 5h:NN%(Hh Mm) wk:NN%(Dd Hh)` (the folder is uncolored; the branch is magenta).
+8. Applies ANSI colors and prints to stdout as `folder git:branch Model effort ctx:NN% 5h:NN%(Hh Mm) wk:NN%(Dd Hh)` (the folder is uncolored; the branch is magenta; the effort is dimmed).
 
 ## License / Credits
 

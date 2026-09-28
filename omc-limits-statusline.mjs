@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-// Minimal Claude Code statusline: shows context window usage, 5-hour and weekly OAuth usage.
+// Minimal Claude Code statusline: shows model, reasoning effort, context window usage,
+// 5-hour and weekly OAuth usage.
 //
 // Distilled from yeachan-heo/oh-my-claudecode (MIT):
 //   src/hud/usage-api.ts   - OAuth credential read + token refresh + API fetch
@@ -12,8 +13,9 @@
 // re-runs this script with --refresh to update the cache, while the current
 // render serves the cached value immediately. This keeps every render well
 // under Claude Code's statusline command timeout, so updates are never dropped.
-// Output is colored by 70/90% thresholds. Context window usage is read from
-// Claude Code's stdin JSON (context_window.used_percentage).
+// Output is colored by 70/90% thresholds. Context window usage and reasoning
+// effort are read from Claude Code's stdin JSON (context_window.used_percentage,
+// effort.level).
 
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync, mkdirSync, statSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
@@ -379,7 +381,11 @@ function renderModel(stdinData) {
   // appends to display_name — generic, so "(200K context)" etc. are handled too.
   const name = raw.replace(/\s*\([^)]*context[^)]*\)\s*$/i, '');
   if (!name) return null;
-  return `${CYAN}${name}${RESET}`;
+  // effort.level (low/medium/high/xhigh/max) is absent when the model does not
+  // support the effort parameter; the model name then renders on its own.
+  const effort = stdinData?.effort?.level;
+  if (!effort) return `${CYAN}${name}${RESET}`;
+  return `${CYAN}${name}${RESET} ${DIM}${effort}${RESET}`;
 }
 
 function renderContext(ctxPercent) {
