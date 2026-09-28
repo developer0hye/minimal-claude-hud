@@ -59,6 +59,17 @@ const YELLOW = '\x1b[33m';
 const RED = '\x1b[31m';
 const CYAN = '\x1b[36m';
 const MAGENTA = '\x1b[35m';
+const BLUE = '\x1b[34m';
+const BOLD = '\x1b[1m';
+// Effort colors by depth: blue for the lighter levels, cyan for the default,
+// magenta for the deeper ones. Unknown future levels fall back to the plain color.
+const EFFORT_COLORS = {
+  low: BLUE,
+  medium: BLUE,
+  high: CYAN,
+  xhigh: MAGENTA,
+  max: `${BOLD}${MAGENTA}`,
+};
 const WARN_PCT = 70;
 const CRIT_PCT = 90;
 
@@ -418,7 +429,7 @@ function renderModel(stdinData) {
   // support the effort parameter; the model name then renders on its own.
   const effort = stdinData?.effort?.level;
   if (!effort) return `${CYAN}${name}${RESET}`;
-  return `${CYAN}${name}${RESET} ${DIM}${effort}${RESET}`;
+  return `${CYAN}${name}${RESET} ${EFFORT_COLORS[effort] ?? ''}${effort}${RESET}`;
 }
 
 function renderContext(ctxPercent) {
