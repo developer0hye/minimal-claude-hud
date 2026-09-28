@@ -1,6 +1,6 @@
 {
   "name": "minimal-claude-hud",
-  "description": "Minimal statusline HUD for Claude Code — folder, git branch, model, context window %, and 5h/weekly rate-limit usage. Zero deps, single .mjs.",
+  "description": "Minimal statusline HUD for Claude Code — folder, git branch, model, reasoning effort, context window %, and 5h/weekly rate-limit usage. Zero deps, single .mjs.",
   "version": "0.2.0",
   "author": {
     "name": "Yonghye Kwon",
