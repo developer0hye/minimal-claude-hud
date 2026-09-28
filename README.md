@@ -2,7 +2,7 @@
 
 Shows the **current folder**, **git branch**, **model name**, **context window usage**, **5-hour usage**, and **weekly usage** in the Claude Code global statusline.
 
-Also supports **OpenAI Codex CLI** (folder, git branch, model, fast mode, context, weekly usage) — see [Codex CLI](#codex-cli).
+Also supports **OpenAI Codex CLI** (folder, git branch, model and reasoning effort, fast mode, context, weekly usage) — see [Codex CLI](#codex-cli).
 
 ```
 myproject git:feat/my-branch Opus ctx:42% 5h:13%(1h15m) wk:3%(5d22h)
@@ -126,27 +126,28 @@ Codex CLI has no custom statusline command, but its built-in status line items c
 
 ```toml
 [tui]
-status_line = ["project-name", "git-branch", "model", "fast-mode", "context-used", "weekly-limit"]
+status_line = ["project-name", "git-branch", "model-with-reasoning", "fast-mode", "context-used", "weekly-limit"]
 ```
 
-Result:
+![Codex CLI status line showing the model, reasoning effort, fast mode, context, and weekly limit](./codex-statusline-screenshot.png)
 
-```
-myproject · feat/my-branch · GPT-6-Astra · Fast on · Context 42% used · weekly 84% left
-```
+Captured from Codex CLI after enabling `model-with-reasoning`. Here, `GPT-6-Luna max` shows the active model and reasoning effort; usage values reflect the time of capture.
 
 | minimal-claude-hud | Codex item |
 |--------------------|------------|
 | folder | `project-name` |
 | `git:branch` | `git-branch` |
-| model | `model` |
+| model + reasoning effort | `model-with-reasoning` |
 | fast mode (Codex only) | `fast-mode` (`Fast on` / `Fast off`) |
 | `ctx:NN%` | `context-used` |
 | `wk:NN%` | `weekly-limit` |
 
+`model-with-reasoning` shows the active model and reasoning effort together. To show only the effort, use the `reasoning` item instead.
+
 Differences from the Claude Code version (Codex renders these itself, so they can't be changed):
 - Weekly usage is shown as **remaining** (`weekly 84% left`), not used.
-- No reset countdown and no ≥70% / ≥90% color thresholds.
+- The built-in `weekly-limit` item does not show a reset date or countdown. Check `/status` for reset details when Codex provides them; the native footer currently has no reset-time item.
+- No ≥70% / ≥90% color thresholds.
 - The git branch is looked up at turn start/end, so it may appear only after the first turn.
 - If your plan also has a 5-hour limit, add `"five-hour-limit"` to the list.
 
