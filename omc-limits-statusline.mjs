@@ -6,7 +6,13 @@
 //   src/hud/usage-api.ts   - OAuth credential read + token refresh + API fetch
 //   src/hud/elements/limits.ts  - rendering (5h:NN%(Hh Mm) wk:NN%(Dd Hh))
 //
-// Single-file, no external deps. Reads credentials from macOS Keychain on darwin,
+// Single-file, no external deps. 5h/weekly usage comes from the rate_limits
+// object in Claude Code's stdin JSON whenever it is present (claude.ai Pro/Max,
+// after the session's first API response); this path makes no network calls
+// and reads no credentials. Only when rate_limits is absent does the script fall
+// back to the OAuth usage API below.
+//
+// API fallback: reads credentials from macOS Keychain on darwin,
 // then falls back to ~/.claude/.credentials.json. Caches results in
 // ~/.claude/cache/omc-limits-cache.json. Rendering never blocks on the network
 // (stale-while-revalidate): when the cache is expired, a detached child process
@@ -281,6 +287,33 @@ function parseResponse(r) {
   return out;
 }
 
+// stdin rate_limits.*.resets_at is Unix epoch seconds (the API path uses ISO strings).
+function epochSecondsToDate(v) {
+  return Number.isFinite(v) ? new Date(v * 1000) : parseDate(v);
+}
+
+// Claude Code's own view of the rate limits, updated on every API response of
+// this session. When rate_limits exists it is authoritative even if a window is
+// missing: Claude Code drops a window once its resets_at passes, so falling back
+// to the API cache for it would show the pre-reset number.
+function limitsFromStdin(stdinData) {
+  const rl = stdinData?.rate_limits;
+  if (!rl || typeof rl !== 'object') return null;
+  const fh = rl.five_hour?.used_percentage;
+  const sd = rl.seven_day?.used_percentage;
+  if (fh == null && sd == null) return null;
+  const out = {};
+  if (fh != null) {
+    out.fiveHourPercent = clamp(fh);
+    out.fiveHourResetsAt = epochSecondsToDate(rl.five_hour.resets_at);
+  }
+  if (sd != null) {
+    out.weeklyPercent = clamp(sd);
+    out.weeklyResetsAt = epochSecondsToDate(rl.seven_day.resets_at);
+  }
+  return out;
+}
+
 function readCache() {
   if (!existsSync(CACHE_PATH)) return null;
   try {
@@ -413,12 +446,14 @@ function render(limits, stale, stdinData) {
     const staleMark = stale ? `${DIM}*${RESET}` : '';
     const tilde = stale ? '~' : '';
 
-    const fh = Math.round(limits.fiveHourPercent);
-    const fhReset = formatResetTime(limits.fiveHourResetsAt);
-    const fhPart = fhReset
-      ? `5h:${color(fh)}${fh}%${RESET}${staleMark}${DIM}(${tilde}${fhReset})${RESET}`
-      : `5h:${color(fh)}${fh}%${RESET}${staleMark}`;
-    parts.push(fhPart);
+    if (limits.fiveHourPercent != null) {
+      const fh = Math.round(limits.fiveHourPercent);
+      const fhReset = formatResetTime(limits.fiveHourResetsAt);
+      const fhPart = fhReset
+        ? `5h:${color(fh)}${fh}%${RESET}${staleMark}${DIM}(${tilde}${fhReset})${RESET}`
+        : `5h:${color(fh)}${fh}%${RESET}${staleMark}`;
+      parts.push(fhPart);
+    }
 
     if (limits.weeklyPercent != null) {
       const wk = Math.round(limits.weeklyPercent);
@@ -614,7 +649,13 @@ async function main() {
     return;
   }
   try {
-    const [stdinData, { limits, stale }] = await Promise.all([readStdin(), getUsage()]);
+    // stdin first: when it carries rate_limits, the API path (credentials,
+    // cache, --refresh child) is skipped entirely.
+    const stdinData = await readStdin();
+    const stdinLimits = limitsFromStdin(stdinData);
+    const { limits, stale } = stdinLimits
+      ? { limits: stdinLimits, stale: false }
+      : await getUsage();
     const out = render(limits, stale, stdinData);
     if (out) process.stdout.write(out);
   } catch {
